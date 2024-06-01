@@ -1,1 +1,2 @@
 compressai
+examples

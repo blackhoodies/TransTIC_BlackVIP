@@ -2,8 +2,8 @@ LICENSE
 README.md
 pyproject.toml
 setup.py
-/home/pc3428/TransTIC/TransTIC/compressai/cpp_exts/ops/ops.cpp
-/home/pc3428/TransTIC/TransTIC/compressai/cpp_exts/rans/rans_interface.cpp
+/home/pc3503/NYCU/TransTIC_BlackVIP/compressai/cpp_exts/ops/ops.cpp
+/home/pc3503/NYCU/TransTIC_BlackVIP/compressai/cpp_exts/rans/rans_interface.cpp
 compressai/__init__.py
 compressai/version.py
 compressai.egg-info/PKG-INFO
@@ -61,3 +61,9 @@ compressai/zoo/__init__.py
 compressai/zoo/image.py
 compressai/zoo/pretrained.py
 compressai/zoo/video.py
+examples/BitaAllocationMap.py
+examples/__init__.py
+examples/classification.py
+examples/detection.py
+examples/segmentation.py
+examples/train.py

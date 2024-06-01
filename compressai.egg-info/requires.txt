@@ -7,17 +7,17 @@ pytorch-msssim
 
 [all]
 jupyter
+flake8-bugbear
+pytest-cov
 mypy
 flake8
 sphinx
-furo
-flake8-comprehensions
 ipywidgets
-pytest-cov
-black
-flake8-bugbear
-pytest
+flake8-comprehensions
 isort
+pytest
+black
+furo
 
 [dev]
 pytest
