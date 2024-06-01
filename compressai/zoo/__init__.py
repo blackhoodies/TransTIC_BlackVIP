@@ -47,7 +47,7 @@ image_models = {
     "mbt2018": mbt2018,
     "cheng2020-anchor": cheng2020_anchor,
     "cheng2020-attn": cheng2020_attn,
-    'tic_hp':tic_hp,
+    'tic_hp': tic_hp,
     'tic_promptmodel_first2': tic_promptmodel_first2,
 }
 

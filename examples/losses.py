@@ -25,7 +25,7 @@ class RateDistortionLoss(nn.Module):
         N, _, H, W = target.size()
         out = {}
         num_pixels = N * H * W
-
+        
         out["bpp_loss"] = sum(
             (torch.log(likelihoods).sum() / (-math.log(2) * num_pixels))
             for likelihoods in output["likelihoods"].values()
@@ -93,7 +93,7 @@ class Clsloss(nn.Module):
         return loss, accu, None
 
 class Loss():
-    def __init__(self, model, device,  perceptual_loss=False, lmbda=1e-2):
+    def __init__(self, model, device, perceptual_loss=False, lmbda=1e-2):
         super().__init__()
         self.model = model
         self.rd_loss = RateDistortionLoss(lmbda=lmbda)
@@ -108,7 +108,8 @@ class Loss():
     def spsa_grad_estimate_bi(self, w, model, data, label, lmbda, ck):
         #* repeat k times and average them for stabilizing
         ghats = []
-        N_params = len(torch.nn.utils.parameters_to_vector(model.g_a0_prompt.parameters()))
+        N_params = len(torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters()))
+        # N_params = len(torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters()))
         sp_avg = 5
         for spk in range(sp_avg):
             #! Bernoulli {-1, 1}
@@ -123,12 +124,14 @@ class Loss():
             #* two-side Approximated Numerical Gradient
             w_r = w + ck*perturb
             w_l = w - ck*perturb
-            torch.nn.utils.vector_to_parameters(w_r, self.model.g_a0_prompt.parameters())
+            torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
             output1 = model(data)
-            torch.nn.utils.vector_to_parameters(w_l, self.model.g_a0_prompt.parameters())
+            torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
             output2 = model(data)
-            # torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator.dec.parameters())
-            # torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator.dec.parameters())
+            # torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
+            # torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
+            # torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_dec.dec.parameters())
+            # torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_dec.dec.parameters())
             
             total_loss1, out_criterion1, loss1, accu1, perc_loss1 = self.loss_fn(output1, data, label, lmbda)
             total_loss2, out_criterion2, loss2, accu2, perc_loss2 = self.loss_fn(output2, data, label, lmbda)

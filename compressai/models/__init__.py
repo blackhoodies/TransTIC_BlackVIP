@@ -31,4 +31,3 @@ from .google import *
 from .waseda import *
 from .tic import *
 from .tic_promptmodel import *
-

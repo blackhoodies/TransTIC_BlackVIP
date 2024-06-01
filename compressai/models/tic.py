@@ -191,7 +191,7 @@ class TIC_hp(nn.Module):
                          drop_path=dpr[sum(depths[:5]):sum(depths[:6])],
                          norm_layer=norm_layer,
                          use_checkpoint=use_checkpoint,
-                        prompt_config= prompt_config if (architect in ['both', 'encoder']) and prompt_config.HYPERPRIOR else None
+                         prompt_config= prompt_config if (architect in ['both', 'encoder']) and prompt_config.HYPERPRIOR else None
         )
 
         depths = depths[::-1]

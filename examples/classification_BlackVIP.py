@@ -54,6 +54,9 @@ from compressai.zoo import image_models
 from losses import *
 import yaml
 
+from utils.advance_models import wCoordinator
+from utils.tools import load_pretrained_weights
+
 class AverageMeter:
     """Compute running average."""
 
@@ -107,10 +110,24 @@ def configure_optimizers(net, args):
 
     if args.TRANSFER_TYPE == "prompt":
         parameters = {
-        k
-        for k, p in net.named_parameters()
-        if "prompt" in k
-    }
+            k
+            for k, p in net.named_parameters()
+            if "prompt" in k
+        }
+    elif args.TRANSFER_TYPE == "BlackVIP":
+        parameters = {
+            k
+            for k, p in net.named_parameters()
+            if "coordinator" in k.split('.')[0] and "dec" in k.split('.')[1]
+        }
+    else:
+        raise NotImplementedError
+    
+    # print(parameters)
+    # for k, p in net.named_parameters():
+    #     print(k.split('.'))
+    #     if "coordinator" in k.split('.')[0] and "dec" in k.split('.')[1]:
+    #         print(k)
 
     params_dict = dict(net.named_parameters())
 
@@ -143,9 +160,11 @@ def train_one_epoch(
         optimizer.zero_grad()
 
         out_net = model(d)
-        w = torch.nn.utils.parameters_to_vector(model.g_a0_prompt.parameters())
+        
+        # SPSA-GC
+        w_enc = torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters())
 
-        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w, model, d, l, lmbda, ck)
+        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck)
         if step > 1:  
             m1 = b1*m1 + ghat
         else:              
@@ -154,8 +173,21 @@ def train_one_epoch(
          
 
         #* param update
-        w_new = w - ak * accum_ghat
-        torch.nn.utils.vector_to_parameters(w_new, model.g_a0_prompt.parameters())
+        w_new_enc = w_enc - ak * accum_ghat
+        torch.nn.utils.vector_to_parameters(w_new_enc, model.coordinator_enc.dec.parameters())
+
+        w_dec = torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters())
+        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck)
+        if step > 1:  
+            m1 = b1*m1 + ghat
+        else:              
+            m1 = ghat
+        accum_ghat = ghat + b1*m1
+         
+
+        #* param update
+        w_new_dec = w_dec - ak * accum_ghat
+        torch.nn.utils.vector_to_parameters(w_new_dec, model.coordinator_dec.dec.parameters())
         # total_loss.backward()
         # optimizer.step()
 
@@ -207,6 +239,7 @@ def save_checkpoint(state, is_best, base_dir, filename="checkpoint.pth.tar"):
     if is_best:
         shutil.copyfile(base_dir+filename, base_dir+"checkpoint_best_loss.pth.tar")
 
+
 def parse_args(argv):
     parser = argparse.ArgumentParser(description="Example training script.")
     parser.add_argument(
@@ -253,7 +286,7 @@ def main(argv):
     logging.info('=' * len(msg))
 
     cls_transforms = transforms.Compose(
-        [transforms.Resize(256), transforms.CenterCrop(256), transforms.ToTensor()]
+        [transforms.Resize(args.patch_size), transforms.CenterCrop(args.patch_size), transforms.ToTensor()]
     )
 
     if args.dataset=='imagenet':
@@ -268,7 +301,9 @@ def main(argv):
     val_dataloader = DataLoader(val_dataset,batch_size=args.test_batch_size,num_workers=args.num_workers,shuffle=False,pin_memory=(device == "cuda"),)
     test_dataloader = DataLoader(test_dataset,batch_size=args.test_batch_size,num_workers=args.num_workers,shuffle=False,pin_memory=(device == "cuda"),)
   
-    net = image_models[args.model](quality=int(args.quality_level), prompt_config=args)
+    net = image_models[args.model](quality=int(args.quality_level), prompt_config=args.prompt_config)
+    net = wCoordinator(args, net)
+    
     net = net.to(device)
     for param in net.parameters():
         param.requires_grad = False
@@ -276,6 +311,9 @@ def main(argv):
         for k, p in net.named_parameters():
             if "prompt" not in k:
                 p.requires_grad = False
+
+    # if args.MODEL.INIT_WEIGHTS:
+    #     load_pretrained_weights(net.coordinator.dec, args.MODEL.INIT_WEIGHTS)
 
     optimizer = configure_optimizers(net, args)
     lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30,60], gamma=0.5)
@@ -288,12 +326,17 @@ def main(argv):
         logging.info("Loading "+str(args.checkpoint))
         checkpoint = torch.load(args.checkpoint, map_location=device)
         if list(checkpoint["state_dict"].keys())[0][:7]=='module.':
+            print('module.')
             from collections import OrderedDict
             new_state_dict = OrderedDict()
             for k, v in checkpoint["state_dict"].items():
-                name = k[7:] 
+                if args.restore == 'scratch':
+                    name = f"net.{k[7:]}"
+                else:
+                    name = k[7:] 
                 new_state_dict[name] = v
         else:
+            print('load')
             new_state_dict = checkpoint['state_dict']
         net.load_state_dict(new_state_dict, strict=True if args.TEST else False)
 
@@ -303,7 +346,7 @@ def main(argv):
     if args.TEST:
         best_loss = float("inf")
         tqrange = tqdm.trange(last_epoch, args.epochs)
-        loss = test_epoch(-1, test_dataloader, net, rdcriterion, clscriterion,  args.VPT_lmbda,'test')
+        loss = test_epoch(-1, test_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'test')
         return
 
     best_loss = float("inf")
@@ -311,11 +354,11 @@ def main(argv):
     # loss = test_epoch(-1, val_dataloader, net, rd_criterion, criterion_cls, args.VPT_lmbda,'val')
     for epoch in tqrange:
         train_dataloader = DataLoader(
-        small_train_datasets[epoch%32],
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        shuffle=True,
-        pin_memory=(device == "cuda"),
+            small_train_datasets[epoch%32],
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            shuffle=True,
+            pin_memory=(device == "cuda"),
         )
         step = args.batch_size*epoch + 1
         train_one_epoch(
@@ -351,8 +394,8 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    # import compressai
-    # print(sys.path)
-    # print(os.path.abspath(compressai.__file__))
+    import compressai
+    print(sys.path)
+    print(os.path.abspath(compressai.__file__))
     main(sys.argv[1:])
 0
