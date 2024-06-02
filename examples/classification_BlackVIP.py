@@ -122,12 +122,6 @@ def configure_optimizers(net, args):
         }
     else:
         raise NotImplementedError
-    
-    # print(parameters)
-    # for k, p in net.named_parameters():
-    #     print(k.split('.'))
-    #     if "coordinator" in k.split('.')[0] and "dec" in k.split('.')[1]:
-    #         print(k)
 
     params_dict = dict(net.named_parameters())
 
@@ -326,7 +320,6 @@ def main(argv):
         logging.info("Loading "+str(args.checkpoint))
         checkpoint = torch.load(args.checkpoint, map_location=device)
         if list(checkpoint["state_dict"].keys())[0][:7]=='module.':
-            print('module.')
             from collections import OrderedDict
             new_state_dict = OrderedDict()
             for k, v in checkpoint["state_dict"].items():
@@ -336,7 +329,6 @@ def main(argv):
                     name = k[7:] 
                 new_state_dict[name] = v
         else:
-            print('load')
             new_state_dict = checkpoint['state_dict']
         net.load_state_dict(new_state_dict, strict=True if args.TEST else False)
 
@@ -394,8 +386,8 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    import compressai
-    print(sys.path)
-    print(os.path.abspath(compressai.__file__))
+    # import compressai
+    # print(sys.path)
+    # print(os.path.abspath(compressai.__file__))
     main(sys.argv[1:])
 0

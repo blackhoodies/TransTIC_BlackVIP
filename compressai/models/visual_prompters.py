@@ -120,7 +120,6 @@ class Coordinator(nn.Module):
         self.backbone = args.BLACKVIP['PT_BACKBONE']
         act = nn.GELU #if args.TRAINER.BLACKVIP.ACT == 'gelu' else nn.ReLU
         src_dim = args.BLACKVIP['SRC_DIM']
-        e_out_dim = args.BLACKVIP['E_OUT_DIM']
 
         z_dim = 768
         if self.backbone == 'vit-mae-base':   #! SSL-MAE VIT-B (n param: 86M)
@@ -132,14 +131,7 @@ class Coordinator(nn.Module):
             z_dim = 2048
         else: raise ValueError('not implemented')
 
-        if prompt_type == 'Instance':
-            # Without trigger vector
-            # self.dec = DecoderManual(0, e_out_dim, act=act, arch=self.backbone)
-            self.dec = DecoderManual(z_dim, src_dim, act=act, arch=self.backbone)
-        elif prompt_type == 'Task':
-            self.dec = DecoderManual(z_dim, src_dim, act=act, arch=self.backbone)
-        else:
-            raise NotImplementedError
+        self.dec = DecoderManual(z_dim, src_dim, act=act, arch=self.backbone, prompt_type=prompt_type)
 
     def forward(self, x):
         with torch.no_grad():
@@ -165,15 +157,20 @@ class Coordinator(nn.Module):
 
 
 class DecoderManual(nn.Module):
-    def __init__(self, i_dim, src_dim, act=nn.GELU, arch='vit-base'):
+    def __init__(self, i_dim, src_dim, act=nn.GELU, arch='vit-base', prompt_type='Task'):
         super(DecoderManual, self).__init__()
         if i_dim: self.shared_feature = 1
         else:     self.shared_feature = 0
         if self.shared_feature:
             #! start from 7*7*16(784:16) or 7*7*32(1568:800) or 7*7*64(3,136:2368)
-            if (src_dim % 49) != 0: raise ValueError('map dim must be devided with 7*7')
-            self.p_trigger = torch.nn.Parameter(torch.Tensor(1, src_dim - i_dim))
-            torch.nn.init.uniform_(self.p_trigger, a=0.0, b=0.1) # can be tuned
+            if (src_dim % 49) != 0: raise ValueError('map dim must be divided with 7*7')
+            
+            if prompt_type == 'Task':
+                self.p_trigger = torch.nn.Parameter(torch.Tensor(1, src_dim - i_dim))   # [1, 800]
+                torch.nn.init.uniform_(self.p_trigger, a=0.0, b=0.1) # can be tuned
+            elif prompt_type == 'Instance':
+                self.p_trigger = torch.nn.Parameter(torch.Tensor(1, src_dim - i_dim), requires_grad=False)
+                torch.nn.init.zeros_(self.p_trigger)
             src_c = src_dim // 49
         else:
             src_c = src_dim
@@ -184,6 +181,7 @@ class DecoderManual(nn.Module):
         if arch in ['vit-mae-base', 'vit-base']:
             if src_c >= 64:    g_c = 64
             else:              g_c = src_c
+            
             body_seq              +=  [nn.ConvTranspose2d(src_c, 64, 2, 2, 0, groups=g_c),
                                        nn.ConvTranspose2d(64, 64, kernel_size=1, bias=bias_flag)]
             body_seq              +=  [nn.BatchNorm2d(64), act()]
@@ -221,9 +219,10 @@ class DecoderManual(nn.Module):
             p_trigger = self.p_trigger.repeat(N, 1)
             z_cube = torch.cat((z, p_trigger), dim=1)
             z_cube = z_cube.reshape(N, -1, 7, 7)
-        else:
-            return self.body(z)
-        return self.body(z_cube)
+        else: 
+            return self.body(z)     # [16, 768]
+        
+        return self.body(z_cube)    # [16, 32, 7, 7]
 
 
 class EncoderManual(nn.Module):

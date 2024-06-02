@@ -11,7 +11,7 @@ class wCoordinator(nn.Module):
         self.net = net
         
         self.p_eps = args.BLACKVIP['P_EPS']
-        self.coordinator_enc = __prompters__[args.BLACKVIP['METHOD']](args, prompt_type='Instance')
+        self.coordinator_enc = __prompters__[args.BLACKVIP['METHOD']](args, prompt_type='Instance') # Task
         self.coordinator_dec = __prompters__[args.BLACKVIP['METHOD']](args, prompt_type='Task')
 
         self.align = Alignment(64)

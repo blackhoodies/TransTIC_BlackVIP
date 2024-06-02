@@ -5,8 +5,8 @@ epochs: 400
 learning_rate: 1.e-4
 num_workers: 8
 quality_level: 4 # {1,2,3,4}
-lmbda:  0.0018 # {0.0018, 0.0035, 0.0067, 0.013}
-batch_size: 20
+lmbda:  0.013 # {0.0018, 0.0035, 0.0067, 0.013}
+batch_size: 16
 test_batch_size: 4
 aux_learning_rate: 1.e-3
 patch_size: 224
@@ -28,7 +28,7 @@ BLACKVIP:
   METHOD: "coordinator"
   PT_BACKBONE: 'vit-mae-base'
   SRC_DIM: 1568
-  E_OUT_DIM: 32
+  E_OUT_DIM: 0
   SPSA_PARAMS: [1.0, 0.01, 0.01, 0.4, 0.1]
   OPT_TYPE: "spsa-gc"
   MOMS: 0.9
