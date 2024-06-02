@@ -378,7 +378,7 @@ def main(argv):
                 },
                 is_best,
                 base_dir,
-                filename='checkpoint.pth.tar'
+                filename=f'checkpoint_{epoch}.pth.tar'
             )
             if epoch%10==9:
                 shutil.copyfile(base_dir+'checkpoint.pth.tar', base_dir+ f"checkpoint_{epoch}.pth.tar" )

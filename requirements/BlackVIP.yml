@@ -134,7 +134,7 @@ dependencies:
   - pip:
     - attrs==23.2.0
     - charset-normalizer==3.3.2
-    - clip==1.0
+    # - clip==1.0
     - comet-ml==3.40.0
     - compressai==1.2.0
     - configobj==5.0.8
