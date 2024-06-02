@@ -51,11 +51,96 @@ from torchvision.models import resnet50
 
 from compressai.datasets import ImageFolder
 from compressai.zoo import image_models
-from losses import *
 import yaml
 
 from utils.advance_models import wCoordinator
-from utils.tools import load_pretrained_weights
+
+class RateDistortionLoss(nn.Module):
+    """Custom rate distortion loss with a Lagrangian parameter."""
+
+    def __init__(self, lmbda=1e-2):
+        super().__init__()
+        self.mse = nn.MSELoss()
+        self.lmbda = lmbda
+    
+    def psnr(self, output, target):
+        mse = torch.mean((output - target) ** 2)
+        if(mse == 0):
+            return 100
+        max_pixel = 1.
+        psnr = 10 * torch.log10(max_pixel / mse)
+        return torch.mean(psnr)
+
+    def forward(self, output, target):
+        N, _, H, W = target.size()
+        out = {}
+        num_pixels = N * H * W
+
+        out["bpp_loss"] = sum(
+            (torch.log(likelihoods).sum() / (-math.log(2) * num_pixels))
+            for likelihoods in output["likelihoods"].values()
+        )
+        out["mse_loss"] = self.mse(output["x_hat"], target)
+        out["rdloss"] = self.lmbda * 255**2 * out["mse_loss"] + out["bpp_loss"]
+        
+        out["psnr"] = self.psnr(torch.clamp(output["x_hat"],0,1), target)
+        return out
+
+
+class FeatureHook():
+    def __init__(self, module):
+        module.register_forward_hook(self.attach)
+    
+    def attach(self, model, input, output):
+        self.feature = output
+
+class Clsloss(nn.Module):
+    def __init__(self, device, perceptual_loss=False) -> None:
+        super().__init__()
+        self.ce = nn.CrossEntropyLoss()
+        self.classifier = resnet50(True)
+        self.classifier.requires_grad_(False)
+        self.hooks = [FeatureHook(i) for i in [
+            self.classifier.layer1,
+            self.classifier.layer2,
+            self.classifier.layer3,
+            self.classifier.layer4,
+        ]]
+        self.classifier = self.classifier.to(device)
+        for k, p in self.classifier.named_parameters():
+            p.requires_grad = False
+        self.classifier.eval()
+        self.perceptual_loss = perceptual_loss
+        self.transform = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+
+    def accuracy(output, target, topk=(1,)):
+        maxk = max(topk)
+        batch_size = target.size(0)
+
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+        res = []
+        for k in topk:
+            correct_k = correct[:k].view(-1).float().sum(0)
+            res.append(correct_k.mul_(100.0 / batch_size))
+        return res
+
+    def forward(self, output, d, y_true):
+        x_hat = torch.clamp(output["x_hat"],0,1)
+        pred = self.classifier(self.transform(x_hat))
+        loss = self.ce(pred, y_true)
+        accu = sum(torch.argmax(pred,-1)==y_true)/pred.shape[0]
+        if self.perceptual_loss:
+            pred_feat = [i.feature.clone() for i in self.hooks]
+            _ = self.classifier(self.transform(d))
+            ori_feat = [i.feature.clone() for i in self.hooks]
+            perc_loss = torch.stack([nn.functional.mse_loss(p,o, reduction='none').mean((1,2,3)) for p,o in zip(pred_feat, ori_feat)])
+            perc_loss = perc_loss.mean()
+            return loss, accu, perc_loss
+
+        return loss, accu, None
 
 class AverageMeter:
     """Compute running average."""
@@ -134,60 +219,27 @@ def configure_optimizers(net, args):
 
 
 def train_one_epoch(
-    model, approx_loss, train_dataloader, optimizer, lmbda, step
+    model, criterion_rd, criterion_cls, train_dataloader, optimizer, lmbda
 ):
-    b1 = 0.9
-    a = 0.01
-    c = 0.01
-    gamma = 0.1
-    alpha = 0.4
-    o = 1.0
     model.train()
     device = next(model.parameters()).device
     tqdm_emu = tqdm.tqdm(enumerate(train_dataloader), total=len(train_dataloader), leave=False)
     for i, (d,l) in tqdm_emu:
         d = d.to(device)
         l = l.to(device)
-        ak = a/((step + o)**alpha)
-        ck = c/(step**gamma)
 
         optimizer.zero_grad()
 
         out_net = model(d)
-        
-        # SPSA-GC
-        w_enc = torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters())
 
-        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck)
-        if step > 1:  
-            m1 = b1*m1 + ghat
-        else:              
-            m1 = ghat
-        accum_ghat = ghat + b1*m1
-         
-
-        #* param update
-        w_new_enc = w_enc - ak * accum_ghat
-        torch.nn.utils.vector_to_parameters(w_new_enc, model.coordinator_enc.dec.parameters())
-
-        w_dec = torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters())
-        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck)
-        if step > 1:  
-            m1 = b1*m1 + ghat
-        else:              
-            m1 = ghat
-        accum_ghat = ghat + b1*m1
-         
-
-        #* param update
-        w_new_dec = w_dec - ak * accum_ghat
-        torch.nn.utils.vector_to_parameters(w_new_dec, model.coordinator_dec.dec.parameters())
-        # total_loss.backward()
-        # optimizer.step()
+        out_criterion = criterion_rd(out_net, d)
+        loss, accu, perc_loss = criterion_cls(out_net, d, l)
+        total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
+        total_loss.backward()
+        optimizer.step()
 
         update_txt=f'[{i*len(d)}/{len(train_dataloader.dataset)}] | Loss: {total_loss.item():.3f} | MSE loss: {out_criterion["mse_loss"].item():.5f} | Bpp loss: {out_criterion["bpp_loss"].item():.4f}'
         tqdm_emu.set_postfix_str(update_txt, refresh=True)
-        step += 1
 
 def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda, stage='test'):
     model.eval()
@@ -212,7 +264,7 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
             loss, accu, perc_loss = criterion_cls(out_net, d, l)
             total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
 
-            aux_loss.update(model.aux_loss())
+            aux_loss.update(model.net.aux_loss())
             bpp_loss.update(out_criterion["bpp_loss"])
             loss_am.update(loss)
             mse_loss.update(out_criterion["mse_loss"])
@@ -232,7 +284,6 @@ def save_checkpoint(state, is_best, base_dir, filename="checkpoint.pth.tar"):
     torch.save(state, base_dir+filename)
     if is_best:
         shutil.copyfile(base_dir+filename, base_dir+"checkpoint_best_loss.pth.tar")
-
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(description="Example training script.")
@@ -299,21 +350,26 @@ def main(argv):
     net = wCoordinator(args, net)
     
     net = net.to(device)
+    # freeze
     for param in net.parameters():
         param.requires_grad = False
+    # re-activate
     if args.TRANSFER_TYPE == "prompt":
         for k, p in net.named_parameters():
             if "prompt" not in k:
                 p.requires_grad = False
-
-    # if args.MODEL.INIT_WEIGHTS:
-    #     load_pretrained_weights(net.coordinator.dec, args.MODEL.INIT_WEIGHTS)
+    elif args.TRANSFER_TYPE == "BlackVIP":
+        for k, p in net.named_parameters():
+            k = k.split('.')
+            if "coordinator_enc" == k[0] and "dec" == k[1] and "p_trigger" != k[2]:
+                p.requires_grad = True
+            if "coordinator_dec" == k[0] and "dec" == k[1]:
+                p.requires_grad = True
 
     optimizer = configure_optimizers(net, args)
     lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[30,60], gamma=0.5)
     rdcriterion = RateDistortionLoss(lmbda=args.lmbda)
     clscriterion = Clsloss(device, True)
-    approx_loss = Loss(model=net, device=device, lmbda=args.lmbda, perceptual_loss=True)
 
     last_epoch = 0
     if args.checkpoint: 
@@ -343,7 +399,9 @@ def main(argv):
 
     best_loss = float("inf")
     tqrange = tqdm.trange(last_epoch, args.epochs)
-    # loss = test_epoch(-1, val_dataloader, net, rd_criterion, criterion_cls, args.VPT_lmbda,'val')
+    
+    loss = test_epoch(-1, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
+    
     for epoch in tqrange:
         train_dataloader = DataLoader(
             small_train_datasets[epoch%32],
@@ -352,16 +410,15 @@ def main(argv):
             shuffle=True,
             pin_memory=(device == "cuda"),
         )
-        step = args.batch_size*epoch + 1
         train_one_epoch(
             net,
-            approx_loss,
+            rdcriterion,
+            clscriterion,
             train_dataloader,
             optimizer,
-            args.VPT_lmbda, 
-            step
+            args.VPT_lmbda
         )
-        loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
+        loss = test_epoch(epoch, val_dataloader, net, rdcriterion,clscriterion, args.VPT_lmbda, 'val')
         lr_scheduler.step()
 
         is_best = loss < best_loss
@@ -378,10 +435,10 @@ def main(argv):
                 },
                 is_best,
                 base_dir,
-                filename='checkpoint.pth.tar'
+                filename=f'checkpoint_{epoch}.pth.tar'
             )
-            if epoch%10==9:
-                shutil.copyfile(base_dir+'checkpoint.pth.tar', base_dir+ f"checkpoint_{epoch}.pth.tar" )
+            # if epoch%10==9:
+            #     shutil.copyfile(base_dir+'checkpoint.pth.tar', base_dir+ f"checkpoint_{epoch}.pth.tar" )
     
 
 
@@ -390,4 +447,3 @@ if __name__ == "__main__":
     # print(sys.path)
     # print(os.path.abspath(compressai.__file__))
     main(sys.argv[1:])
-0
