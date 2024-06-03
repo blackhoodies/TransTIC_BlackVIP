@@ -30,7 +30,7 @@ Specify the data paths, target rate point, corresponding lambda, and checkpoint 
 `python examples/train.py -c config/base_codec.yaml`
 
 ### Classification
-`python examples/classification.py -c config/classification.yaml`<br>
+`python examples/classification_BlackVIP.py -c config/classification_BlackVIP.yaml`<br>
 Add argument `-T` for evaluation.
 
 ### Object Detection

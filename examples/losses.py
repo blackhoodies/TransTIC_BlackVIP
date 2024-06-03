@@ -105,7 +105,7 @@ class Loss():
         total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
         return total_loss, out_criterion, loss, accu, perc_loss
         
-    def spsa_grad_estimate_bi(self, w, model, data, label, lmbda, ck):
+    def spsa_grad_estimate_bi(self, w, model, data, label, lmbda, ck, prompt_type):
         #* repeat k times and average them for stabilizing
         ghats = []
         N_params = len(torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters()))
@@ -124,10 +124,16 @@ class Loss():
             #* two-side Approximated Numerical Gradient
             w_r = w + ck*perturb
             w_l = w - ck*perturb
-            torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
-            output1 = model(data)
-            torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
-            output2 = model(data)
+            if prompt_type == 'instance':
+                torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
+                output1 = model(data)
+                torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
+                output2 = model(data)
+            else:
+                torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_dec.dec.parameters())
+                output1 = model(data)
+                torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_dec.dec.parameters())
+                output2 = model(data)
             # torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
             # torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
             # torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_dec.dec.parameters())

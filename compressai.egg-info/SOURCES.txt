@@ -2,8 +2,8 @@ LICENSE
 README.md
 pyproject.toml
 setup.py
-/home/pc3503/NYCU/TransTIC_BlackVIP/compressai/cpp_exts/ops/ops.cpp
-/home/pc3503/NYCU/TransTIC_BlackVIP/compressai/cpp_exts/rans/rans_interface.cpp
+/home/pc3439/Tai/TransTIC_BlackVIP/compressai/cpp_exts/ops/ops.cpp
+/home/pc3439/Tai/TransTIC_BlackVIP/compressai/cpp_exts/rans/rans_interface.cpp
 compressai/__init__.py
 compressai/version.py
 compressai.egg-info/PKG-INFO
@@ -27,6 +27,7 @@ compressai/models/priors.py
 compressai/models/tic.py
 compressai/models/tic_promptmodel.py
 compressai/models/utils.py
+compressai/models/visual_prompters.py
 compressai/models/waseda.py
 compressai/models/video/__init__.py
 compressai/models/video/google.py
@@ -64,6 +65,9 @@ compressai/zoo/video.py
 examples/BitaAllocationMap.py
 examples/__init__.py
 examples/classification.py
+examples/classification_BlackVIP.py
+examples/classification_WhiteVIP.py
 examples/detection.py
+examples/losses.py
 examples/segmentation.py
 examples/train.py

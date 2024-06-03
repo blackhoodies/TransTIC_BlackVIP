@@ -158,7 +158,7 @@ def train_one_epoch(
         # SPSA-GC
         w_enc = torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters())
 
-        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck)
+        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck, prompt_type='instance')
         if step > 1:  
             m1 = b1*m1 + ghat
         else:              
@@ -171,7 +171,7 @@ def train_one_epoch(
         torch.nn.utils.vector_to_parameters(w_new_enc, model.coordinator_enc.dec.parameters())
 
         w_dec = torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters())
-        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck)
+        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck, prompt_type='task')
         if step > 1:  
             m1 = b1*m1 + ghat
         else:              
