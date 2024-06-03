@@ -212,7 +212,7 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
             loss, accu, perc_loss = criterion_cls(out_net, d, l)
             total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
 
-            aux_loss.update(model.aux_loss())
+            aux_loss.update(model.net.aux_loss())
             bpp_loss.update(out_criterion["bpp_loss"])
             loss_am.update(loss)
             mse_loss.update(out_criterion["mse_loss"])
@@ -343,7 +343,7 @@ def main(argv):
 
     best_loss = float("inf")
     tqrange = tqdm.trange(last_epoch, args.epochs)
-    # loss = test_epoch(-1, val_dataloader, net, rd_criterion, criterion_cls, args.VPT_lmbda,'val')
+    loss = test_epoch(-1, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
     for epoch in tqrange:
         train_dataloader = DataLoader(
             small_train_datasets[epoch%32],
