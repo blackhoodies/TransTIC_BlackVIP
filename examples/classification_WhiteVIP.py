@@ -376,6 +376,7 @@ def main(argv):
         logging.info("Loading "+str(args.checkpoint))
         checkpoint = torch.load(args.checkpoint, map_location=device)
         if list(checkpoint["state_dict"].keys())[0][:7]=='module.':
+            print('module.##########')
             from collections import OrderedDict
             new_state_dict = OrderedDict()
             for k, v in checkpoint["state_dict"].items():
@@ -385,7 +386,14 @@ def main(argv):
                     name = k[7:] 
                 new_state_dict[name] = v
         else:
-            new_state_dict = checkpoint['state_dict']
+            print('load')
+            new_state_dict = {}
+            if args.restore == 'scratch':
+                for k, v in checkpoint["state_dict"].items():
+                    name = f"net.{k}"
+                    new_state_dict[name] = v
+            else:
+                new_state_dict = checkpoint['state_dict']
         net.load_state_dict(new_state_dict, strict=True if args.TEST else False)
 
     if args.cuda and torch.cuda.device_count() > 1:

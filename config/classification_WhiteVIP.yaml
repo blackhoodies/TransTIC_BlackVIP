@@ -1,24 +1,24 @@
 model: "tic_hp"
 dataset: "imagenet"
-dataset_path: '/work/dataset/ILSVRC'
+dataset_path: '/work_a/dataset/ILSVRC/'
 epochs: 400
 learning_rate: 1.e-4
-num_workers: 8
-quality_level: 4 # {1,2,3,4}
-lmbda:  0.013 # {0.0018, 0.0035, 0.0067, 0.013}
-batch_size: 10
-test_batch_size: 8
+num_workers: 20
+quality_level: 2 # {1,2,3,4}
+lmbda:  0.0035 # {0.0018, 0.0035, 0.0067, 0.013}
+batch_size: 32
+test_batch_size: 40
 aux_learning_rate: 1.e-3
 patch_size: 224
 cuda: True
-gpu_id: 0
+gpu_id: 0,1,2,3
 save: True
 clip_max_norm: 1.0
 name: "TransTIC_WhiteVIP"
 exp_name: "TransTIC_WhiteVIP"
-root: "/work/TransTICB"
+root: "/work_d/TransTIC_BlackVIP/"
 seed: 42
-checkpoint: "/work/TransTICB/weights/base_codec_4.pth.tar"  # could be pre-trained base codec (for training) or trained TransTIC (for evaluation)
+checkpoint: "/work_d/TransTIC_BlackVIP/weights/base_codec_2.pth.tar"  # could be pre-trained base codec (for training) or trained TransTIC (for evaluation)
 restore: 'scratch'
 prompt_config: 
 TRANSFER_TYPE: "BlackVIP"
