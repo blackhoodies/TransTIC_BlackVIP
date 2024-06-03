@@ -48,12 +48,14 @@ import torchvision
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.models import resnet50
+from torchvision.utils import save_image
 
 from compressai.datasets import ImageFolder
 from compressai.zoo import image_models
 import yaml
 
 from utils.advance_models import wCoordinator
+from loguru import logger
 
 class RateDistortionLoss(nn.Module):
     """Custom rate distortion loss with a Lagrangian parameter."""
@@ -241,7 +243,7 @@ def train_one_epoch(
         update_txt=f'[{i*len(d)}/{len(train_dataloader.dataset)}] | Loss: {total_loss.item():.3f} | MSE loss: {out_criterion["mse_loss"].item():.5f} | Bpp loss: {out_criterion["bpp_loss"].item():.4f}'
         tqdm_emu.set_postfix_str(update_txt, refresh=True)
 
-def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda, stage='test'):
+def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda, stage='test', args=None):
     model.eval()
     device = next(model.parameters()).device
 
@@ -255,14 +257,29 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
     totalloss = AverageMeter()
 
     with torch.no_grad():
-        tqdm_meter = tqdm.tqdm(enumerate(test_dataloader),leave=False, total=len(test_dataloader))
+        tqdm_meter = tqdm.tqdm(enumerate(test_dataloader), leave=False, total=len(test_dataloader))
         for i, (d,l) in tqdm_meter:
             d = d.to(device)
             l = l.to(device)
             out_net = model(d)
+            
             out_criterion = criterion_rd(out_net, d)
             loss, accu, perc_loss = criterion_cls(out_net, d, l)
             total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
+
+            if args.visualize:
+                base_dir = f'{args.root}/{args.exp_name}/{args.quality_level}/epoch={epoch}/step={i}/'
+                os.makedirs(base_dir, exist_ok=True)
+
+                index = 15  # random.randint(0, len(d)-1)
+                save_image(d[index], f'{base_dir}/x_{index}.png')
+                save_image(out_net['ins_prompt'][index]*10, f'{base_dir}/ins_prompt_{index}.png')
+                save_image(out_net['prompted_images'][index], f'{base_dir}/prompted_x_{index}.png')
+                save_image(out_net['recon_image'][index], f'{base_dir}/x_hat_{index}.png')
+                save_image(out_net['task_prompt'][index]*10, f'{base_dir}/task_prompt_{index}.png')
+                save_image(out_net['x_hat'][index], f'{base_dir}/prompted_x_hat_{index}.png')
+                # logger.debug(f"{out_net['recon_image'].shape=}", f"{out_net['ins_prompt'].shape=}", f"{out_net['task_prompt'].shape=}")
+                logger.info(f"step={i}, {index=}, label={l[index]}: bpp={out_criterion['bpp_loss']}, psnr={out_criterion['psnr']}, {accu=}")
 
             aux_loss.update(model.net.aux_loss())
             bpp_loss.update(out_criterion["bpp_loss"])
@@ -400,9 +417,12 @@ def main(argv):
         net = CustomDataParallel(net)
     
     if args.TEST:
+        epoch = checkpoint["epoch"]
+        logger.add(os.path.join(base_dir, f'test_epoch={epoch}.log'), level='DEBUG')
+        logger.info(f"Training log is stored at {os.path.join(base_dir, f'test_epoch={epoch}.log')}")
         best_loss = float("inf")
         tqrange = tqdm.trange(last_epoch, args.epochs)
-        loss = test_epoch(-1, test_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'test')
+        loss = test_epoch(epoch, test_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'test', args)
         return
 
     best_loss = float("inf")
@@ -426,7 +446,7 @@ def main(argv):
             optimizer,
             args.VPT_lmbda
         )
-        loss = test_epoch(epoch, val_dataloader, net, rdcriterion,clscriterion, args.VPT_lmbda, 'val')
+        loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
         lr_scheduler.step()
 
         is_best = loss < best_loss
@@ -454,4 +474,9 @@ if __name__ == "__main__":
     # import compressai
     # print(sys.path)
     # print(os.path.abspath(compressai.__file__))
+    log_level = "DEBUG"
+    log_format = "<green>{time:YYMMDD HH:mm:ss}</green> | <level>{level: <5}</level> | <yellow>{file}:{line:<4d}</yellow> | <b>{message}</b>"
+
+    logger.remove(0)
+    logger.add(sys.stdout, level=log_level, format=log_format, colorize=True, backtrace=True, diagnose=True)
     main(sys.argv[1:])
