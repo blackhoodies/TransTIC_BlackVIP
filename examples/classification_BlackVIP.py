@@ -158,29 +158,29 @@ def train_one_epoch(
         # SPSA-GC
         w_enc = torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters())
 
-        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck)
+        ghat1, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck, prompt_type='instance')
         if step > 1:  
-            m1 = b1*m1 + ghat
+            m1 = b1*m1 + ghat1
         else:              
-            m1 = ghat
-        accum_ghat = ghat + b1*m1
+            m1 = ghat1
+        accum_ghat1 = ghat1 + b1*m1
          
 
         #* param update
-        w_new_enc = w_enc - ak * accum_ghat
+        w_new_enc = w_enc - ak * accum_ghat1
         torch.nn.utils.vector_to_parameters(w_new_enc, model.coordinator_enc.dec.parameters())
 
         w_dec = torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters())
-        ghat, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck)
+        ghat2, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck, prompt_type='task')
         if step > 1:  
-            m1 = b1*m1 + ghat
+            m2 = b1*m2 + ghat2
         else:              
-            m1 = ghat
-        accum_ghat = ghat + b1*m1
+            m2 = ghat2
+        accum_ghat2 = ghat2 + b1*m2
          
 
         #* param update
-        w_new_dec = w_dec - ak * accum_ghat
+        w_new_dec = w_dec - ak * accum_ghat2
         torch.nn.utils.vector_to_parameters(w_new_dec, model.coordinator_dec.dec.parameters())
         # total_loss.backward()
         # optimizer.step()
