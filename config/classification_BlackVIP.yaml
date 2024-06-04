@@ -18,11 +18,12 @@ name: "TransTIC_BlackVIP"
 exp_name: "TransTIC_BlackVIP"
 root: "/work_d/TransTIC_BlackVIP/"
 seed: 42
-checkpoint: "/work_d/TransTIC_BlackVIP/TransTIC_WhiteVIP/2/checkpoint_25.pth.tar"  # could be pre-trained base codec (for training) or trained TransTIC (for evaluation)
+checkpoint: "/work_d/TransTIC_BlackVIP/TransTIC_BlackVIP/2/checkpoint_0.pth.tar"  # could be pre-trained base codec (for training) or trained TransTIC (for evaluation)
 restore: 'load'
 prompt_config: 
 TRANSFER_TYPE: "BlackVIP"
 VPT_lmbda: 0.0016
+visualize: False
 
 BLACKVIP:
   METHOD: "coordinator"

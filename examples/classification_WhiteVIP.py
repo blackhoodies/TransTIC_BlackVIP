@@ -267,19 +267,29 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
             loss, accu, perc_loss = criterion_cls(out_net, d, l)
             total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
 
-            if args.visualize:
+            if args.visualize and i in [15]:
                 base_dir = f'{args.root}/{args.exp_name}/{args.quality_level}/epoch={epoch}/step={i}/'
                 os.makedirs(base_dir, exist_ok=True)
 
-                index = 15  # random.randint(0, len(d)-1)
-                save_image(d[index], f'{base_dir}/x_{index}.png')
-                save_image(out_net['ins_prompt'][index]*10, f'{base_dir}/ins_prompt_{index}.png')
-                save_image(out_net['prompted_images'][index], f'{base_dir}/prompted_x_{index}.png')
-                save_image(out_net['recon_image'][index], f'{base_dir}/x_hat_{index}.png')
-                save_image(out_net['task_prompt'][index]*10, f'{base_dir}/task_prompt_{index}.png')
-                save_image(out_net['x_hat'][index], f'{base_dir}/prompted_x_hat_{index}.png')
-                # logger.debug(f"{out_net['recon_image'].shape=}", f"{out_net['ins_prompt'].shape=}", f"{out_net['task_prompt'].shape=}")
-                logger.info(f"step={i}, {index=}, label={l[index]}: bpp={out_criterion['bpp_loss']}, psnr={out_criterion['psnr']}, {accu=}")
+                for index in [8]:   # range(len(d))
+                    save_image(d[index], f'{base_dir}/x_{index}.png')
+                    save_image(out_net['ins_prompt'][index]*10, f'{base_dir}/ins_prompt_{index}.png')
+                    save_image(out_net['prompted_images'][index], f'{base_dir}/prompted_x_{index}.png')
+                    save_image(out_net['recon_image'][index], f'{base_dir}/x_hat_{index}.png')
+                    save_image(out_net['task_prompt'][index]*10, f'{base_dir}/task_prompt_{index}.png')
+                    save_image(out_net['x_hat'][index], f'{base_dir}/prompted_x_hat_{index}.png')
+                    
+                    from matplotlib import pyplot as plt
+                    lll = out_net['likelihoods']['y'][index].clamp_min(1e-9).log() / -math.log(2.)
+                    plt.figure(figsize=(6,8))
+                    plt.imshow(lll.cpu().numpy().mean(axis=0), vmin=0, vmax=1.51)
+                    plt.colorbar(shrink=0.62, pad=0.01)
+                    plt.axis('off')
+                    plt.savefig(f'{base_dir}/likelihood_y_{index}.png', bbox_inches='tight', pad_inches=0.01)
+                    plt.close()
+                    
+                    from compressai.utils.bench.codecs import _compute_psnr
+                    logger.info(f"step={i}, {index=}, label={l[index]}: bpp={lll.mean().item()}, psnr={_compute_psnr(out_net['prompted_images'][index], d[index], max_val=1)}, {accu.item()=}")
 
             aux_loss.update(model.net.aux_loss())
             bpp_loss.update(out_criterion["bpp_loss"])
@@ -293,7 +303,6 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
     txt = f"Loss: {loss_am.avg:.3f} | MSE loss: {mse_loss.avg:.5f} | Bpp loss: {bpp_loss.avg:.4f} | accu: {accuracy.avg:.4f}\n"
     tqdm_meter.set_postfix_str(txt)
 
-    model.train()
     print(f"{epoch} | bpp loss: {bpp_loss.avg:.5f} | psnr: {psnr.avg:.5f} | accu: {accuracy.avg:.5f}")
     return loss_am.avg
 
@@ -388,7 +397,7 @@ def main(argv):
     rdcriterion = RateDistortionLoss(lmbda=args.lmbda)
     clscriterion = Clsloss(device, True)
 
-    last_epoch = 0
+    last_epoch = 9
     if args.checkpoint: 
         logging.info("Loading "+str(args.checkpoint))
         checkpoint = torch.load(args.checkpoint, map_location=device)
@@ -413,6 +422,11 @@ def main(argv):
                 new_state_dict = checkpoint['state_dict']
         net.load_state_dict(new_state_dict, strict=True if args.TEST else False)
 
+    # model = net.coordinator_dec.dec
+    # print(model)
+    # total_params = sum(p.numel() for p in model.parameters())
+    # print(f"Number of parameters: {total_params / 1000 ** 2} MB")
+
     if args.cuda and torch.cuda.device_count() > 1:
         net = CustomDataParallel(net)
     
@@ -428,7 +442,7 @@ def main(argv):
     best_loss = float("inf")
     tqrange = tqdm.trange(last_epoch, args.epochs)
     
-    loss = test_epoch(-1, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
+    loss = test_epoch(-1, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val', args)
     
     for epoch in tqrange:
         train_dataloader = DataLoader(
@@ -446,7 +460,7 @@ def main(argv):
             optimizer,
             args.VPT_lmbda
         )
-        loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
+        loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val', args)
         lr_scheduler.step()
 
         is_best = loss < best_loss

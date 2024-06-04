@@ -48,6 +48,7 @@ import torchvision
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.models import resnet50
+from torchvision.utils import save_image
 
 from compressai.datasets import ImageFolder
 from compressai.zoo import image_models
@@ -55,7 +56,7 @@ from losses import *
 import yaml
 
 from utils.advance_models import wCoordinator
-from utils.tools import load_pretrained_weights
+from loguru import logger
 
 class AverageMeter:
     """Compute running average."""
@@ -177,7 +178,7 @@ def train_one_epoch(
         else:              
             m2 = ghat2
         accum_ghat2 = ghat2 + b1*m2
-         
+        
 
         #* param update
         w_new_dec = w_dec - ak * accum_ghat2
@@ -189,7 +190,7 @@ def train_one_epoch(
         tqdm_emu.set_postfix_str(update_txt, refresh=True)
         step += 1
 
-def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda, stage='test'):
+def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda, stage='test', args=None):
     model.eval()
     device = next(model.parameters()).device
 
@@ -203,14 +204,39 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
     totalloss = AverageMeter()
 
     with torch.no_grad():
-        tqdm_meter = tqdm.tqdm(enumerate(test_dataloader),leave=False, total=len(test_dataloader))
+        tqdm_meter = tqdm.tqdm(enumerate(test_dataloader), leave=False, total=len(test_dataloader))
         for i, (d,l) in tqdm_meter:
             d = d.to(device)
             l = l.to(device)
             out_net = model(d)
+            
             out_criterion = criterion_rd(out_net, d)
             loss, accu, perc_loss = criterion_cls(out_net, d, l)
             total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
+
+            if args.visualize and i in [15]:
+                base_dir = f'{args.root}/{args.exp_name}/{args.quality_level}/epoch={epoch}/step={i}/'
+                os.makedirs(base_dir, exist_ok=True)
+
+                for index in [8]:   # range(len(d))
+                    save_image(d[index], f'{base_dir}/x_{index}.png')
+                    save_image(out_net['ins_prompt'][index]*10, f'{base_dir}/ins_prompt_{index}.png')
+                    save_image(out_net['prompted_images'][index], f'{base_dir}/prompted_x_{index}.png')
+                    save_image(out_net['recon_image'][index], f'{base_dir}/x_hat_{index}.png')
+                    save_image(out_net['task_prompt'][index]*10, f'{base_dir}/task_prompt_{index}.png')
+                    save_image(out_net['x_hat'][index], f'{base_dir}/prompted_x_hat_{index}.png')
+                    
+                    from matplotlib import pyplot as plt
+                    lll = out_net['likelihoods']['y'][index].clamp_min(1e-9).log() / -math.log(2.)
+                    plt.figure(figsize=(6,8))
+                    plt.imshow(lll.cpu().numpy().mean(axis=0), vmin=0, vmax=1.51)
+                    plt.colorbar(shrink=0.62, pad=0.01)
+                    plt.axis('off')
+                    plt.savefig(f'{base_dir}/likelihood_y_{index}.png', bbox_inches='tight', pad_inches=0.01)
+                    plt.close()
+                    
+                    from compressai.utils.bench.codecs import _compute_psnr
+                    logger.info(f"step={i}, {index=}, label={l[index]}: bpp={lll.mean().item()}, psnr={_compute_psnr(out_net['prompted_images'][index], d[index], max_val=1)}, {accu=}")
 
             aux_loss.update(model.net.aux_loss())
             bpp_loss.update(out_criterion["bpp_loss"])
@@ -329,21 +355,31 @@ def main(argv):
                     name = k[7:] 
                 new_state_dict[name] = v
         else:
-            new_state_dict = checkpoint['state_dict']
+            print('load')
+            new_state_dict = {}
+            if args.restore == 'scratch':
+                for k, v in checkpoint["state_dict"].items():
+                    name = f"net.{k}"
+                    new_state_dict[name] = v
+            else:
+                new_state_dict = checkpoint['state_dict']
         net.load_state_dict(new_state_dict, strict=True if args.TEST else False)
 
     if args.cuda and torch.cuda.device_count() > 1:
         net = CustomDataParallel(net)
     
     if args.TEST:
+        epoch = checkpoint["epoch"]
+        logger.add(os.path.join(base_dir, f'test_epoch={epoch}.log'), level='DEBUG')
+        logger.info(f"Training log is stored at {os.path.join(base_dir, f'test_epoch={epoch}.log')}")
         best_loss = float("inf")
         tqrange = tqdm.trange(last_epoch, args.epochs)
-        loss = test_epoch(-1, test_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'test')
+        loss = test_epoch(epoch, test_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'test', args)
         return
 
     best_loss = float("inf")
     tqrange = tqdm.trange(last_epoch, args.epochs)
-    loss = test_epoch(-1, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
+    loss = test_epoch(last_epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val', args)
     for epoch in tqrange:
         train_dataloader = DataLoader(
             small_train_datasets[epoch%32],
@@ -361,7 +397,7 @@ def main(argv):
             args.VPT_lmbda, 
             step
         )
-        loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
+        loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val', args)
         lr_scheduler.step()
 
         is_best = loss < best_loss
@@ -389,5 +425,10 @@ if __name__ == "__main__":
     # import compressai
     # print(sys.path)
     # print(os.path.abspath(compressai.__file__))
+    log_level = "DEBUG"
+    log_format = "<green>{time:YYMMDD HH:mm:ss}</green> | <level>{level: <5}</level> | <yellow>{file}:{line:<4d}</yellow> | <b>{message}</b>"
+
+    logger.remove(0)
+    logger.add(sys.stdout, level=log_level, format=log_format, colorize=True, backtrace=True, diagnose=True)
     main(sys.argv[1:])
 0
