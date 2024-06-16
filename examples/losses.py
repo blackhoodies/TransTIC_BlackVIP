@@ -105,11 +105,12 @@ class Loss():
         total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
         return total_loss, out_criterion, loss, accu, perc_loss
         
-    def spsa_grad_estimate_bi(self, w, model, data, label, lmbda, ck, prompt_type):
+    def spsa_grad_estimate_bi(self, w, model, data, label, lmbda, ck):
         #* repeat k times and average them for stabilizing
         ghats = []
-        N_params = len(torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters()))
+        N_params = len(torch.nn.utils.parameters_to_vector(model.wrapper.parameters()))
         # N_params = len(torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters()))
+        
         sp_avg = 5
         for spk in range(sp_avg):
             #! Bernoulli {-1, 1}
@@ -124,32 +125,45 @@ class Loss():
             #* two-side Approximated Numerical Gradient
             w_r = w + ck*perturb
             w_l = w - ck*perturb
-            if prompt_type == 'instance':
-                torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
-                output1 = model(data)
-                torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
-                output2 = model(data)
-            else:
-                torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_dec.dec.parameters())
-                output1 = model(data)
-                torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_dec.dec.parameters())
-                output2 = model(data)
+            # if prompt_type == 'instance':
+            #     torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
+            #     output1 = model(data)
+            #     torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
+            #     output2 = model(data)
+            # else:
+        
+            torch.nn.utils.vector_to_parameters(w_r, model.wrapper.parameters())
+            w_wrapper_ed = torch.nn.utils.parameters_to_vector(model.wrapper.coordinator_enc.parameters())
+            torch.nn.utils.vector_to_parameters(w_wrapper_ed, model.coordinator_enc.dec.parameters())
+            w_wrapper_dd = torch.nn.utils.parameters_to_vector(model.wrapper.coordinator_dec.parameters())
+            torch.nn.utils.vector_to_parameters(w_wrapper_dd, model.coordinator_dec.dec.parameters())
+            # model.coordinator_enc.dec.weight = model.wrapper.coordinator_enc.dec.weight.clone()
+            # model.coordinator_dec.dec.weight = model.wrapper.coordinator_dec.dec.weight.clone()
+            output1 = model(data)
+            torch.nn.utils.vector_to_parameters(w_l, self.model.wrapper.parameters())
+            w_wrapper_ed = torch.nn.utils.parameters_to_vector(model.wrapper.coordinator_enc.parameters())
+            torch.nn.utils.vector_to_parameters(w_wrapper_ed, model.coordinator_enc.dec.parameters())
+            w_wrapper_dd = torch.nn.utils.parameters_to_vector(model.wrapper.coordinator_dec.parameters())
+            torch.nn.utils.vector_to_parameters(w_wrapper_dd, model.coordinator_dec.dec.parameters())
+            # model.coordinator_enc.dec.weight = model.wrapper.coordinator_enc.dec.weight.clone()
+            # model.coordinator_dec.dec.weight = model.wrapper.coordinator_dec.dec.weight.clone()
+            output2 = model(data)
+     
             # torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_enc.dec.parameters())
             # torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_enc.dec.parameters())
             # torch.nn.utils.vector_to_parameters(w_r, self.model.coordinator_dec.dec.parameters())
             # torch.nn.utils.vector_to_parameters(w_l, self.model.coordinator_dec.dec.parameters())
-            
             total_loss1, out_criterion1, loss1, accu1, perc_loss1 = self.loss_fn(output1, data, label, lmbda)
             total_loss2, out_criterion2, loss2, accu2, perc_loss2 = self.loss_fn(output2, data, label, lmbda)
 
             #* parameter update via estimated gradient
             ghat = (total_loss1 - total_loss2)/((2*ck)*perturb)
             ghats.append(ghat.reshape(1, -1))
+          
         if sp_avg == 1: pass
         else: ghat = torch.cat(ghats, dim=0).mean(dim=0) 
         total_loss = ((total_loss1 + total_loss2)/2)
         acc = (0.5*(accu1 + accu2)).item()
-
         return ghat, total_loss, acc, out_criterion1, perc_loss1, loss1, model
     
 

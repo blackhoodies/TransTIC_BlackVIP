@@ -4,6 +4,13 @@ import torch.nn.functional as F
 from compressai.models.visual_prompters import __prompters__
 from compressai.models.tic import Alignment
 
+class ModuleWrapper(nn.Module):
+    def __init__(self, coordinator_enc, coordinator_dec):
+        super().__init__()
+        self.coordinator_enc = coordinator_enc
+        self.coordinator_dec = coordinator_dec
+    def forward(self):
+        return 0 
     
 class wCoordinator(nn.Module):
     def __init__(self, args, net):
@@ -13,7 +20,8 @@ class wCoordinator(nn.Module):
         self.p_eps = args.BLACKVIP['P_EPS']
         self.coordinator_enc = __prompters__[args.BLACKVIP['METHOD']](args, prompt_type='Instance') # Task
         self.coordinator_dec = __prompters__[args.BLACKVIP['METHOD']](args, prompt_type='Task')
-
+        
+        self.wrapper = ModuleWrapper(__prompters__[args.BLACKVIP['METHOD']](args, prompt_type='Instance').dec,__prompters__[args.BLACKVIP['METHOD']](args, prompt_type='Task').dec)
         self.align = Alignment(64)
 
     def forward(self, image):

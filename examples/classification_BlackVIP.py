@@ -53,6 +53,7 @@ from compressai.datasets import ImageFolder
 from compressai.zoo import image_models
 from losses import *
 import yaml
+import traceback
 
 from utils.advance_models import wCoordinator
 from utils.tools import load_pretrained_weights
@@ -134,7 +135,7 @@ def configure_optimizers(net, args):
 
 
 def train_one_epoch(
-    model, approx_loss, train_dataloader, optimizer, lmbda, step
+    model, approx_loss, train_dataloader, optimizer, lmbda, step, m1
 ):
     b1 = 0.9
     a = 0.01
@@ -142,6 +143,7 @@ def train_one_epoch(
     gamma = 0.1
     alpha = 0.4
     o = 1.0
+
     model.train()
     device = next(model.parameters()).device
     tqdm_emu = tqdm.tqdm(enumerate(train_dataloader), total=len(train_dataloader), leave=False)
@@ -154,44 +156,54 @@ def train_one_epoch(
         optimizer.zero_grad()
 
         out_net = model(d)
-        
+        # w1 = torch.nn.utils.parameters_to_vector(model.wrapper.coordinator_enc.parameters())
+        # w2 = torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters())
+        # print(torch.sum(torch.abs(w1-w2))); exit()
         # SPSA-GC
-        w_enc = torch.nn.utils.parameters_to_vector(model.coordinator_enc.dec.parameters())
+        w_enc = torch.nn.utils.parameters_to_vector(model.wrapper.parameters())
 
-        ghat1, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck, prompt_type='instance')
+        ghat1, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_enc, model, d, l, lmbda, ck)
         if step > 1:  
             m1 = b1*m1 + ghat1
         else:              
             m1 = ghat1
+        
         accum_ghat1 = ghat1 + b1*m1
-         
 
         #* param update
         w_new_enc = w_enc - ak * accum_ghat1
-        torch.nn.utils.vector_to_parameters(w_new_enc, model.coordinator_enc.dec.parameters())
-
-        w_dec = torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters())
-        ghat2, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck, prompt_type='task')
-        if step > 1:  
-            m2 = b1*m2 + ghat2
-        else:              
-            m2 = ghat2
-        accum_ghat2 = ghat2 + b1*m2
+        torch.nn.utils.vector_to_parameters(w_new_enc, model.wrapper.parameters())
+        w_wrapper_ed = torch.nn.utils.parameters_to_vector(model.wrapper.coordinator_enc.parameters())
+        torch.nn.utils.vector_to_parameters(w_wrapper_ed, model.coordinator_enc.dec.parameters())
+        w_wrapper_dd = torch.nn.utils.parameters_to_vector(model.wrapper.coordinator_dec.parameters())
+        torch.nn.utils.vector_to_parameters(w_wrapper_dd, model.coordinator_dec.dec.parameters())
+    #    .weight = model.wrapper.coordinator_enc.dec.weight
+        # model.coordinator_dec.dec.weight = model.wrapper.coordinator_dec.dec.weight
+        
+        # w_dec = torch.nn.utils.parameters_to_vector(model.coordinator_dec.dec.parameters())
+        # ghat2, total_loss, accu, out_criterion, perc_loss, loss, model = approx_loss.spsa_grad_estimate_bi(w_dec, model, d, l, lmbda, ck, prompt_type='task')
+        # if step > 1:  
+        #     m2 = b1*m2 + ghat2
+        # else:              
+        #     m2 = ghat2
+        # accum_ghat2 = ghat2 + b1*m2
          
 
-        #* param update
-        w_new_dec = w_dec - ak * accum_ghat2
-        torch.nn.utils.vector_to_parameters(w_new_dec, model.coordinator_dec.dec.parameters())
+        # #* param update
+        # w_new_dec = w_dec - ak * accum_ghat2
+        # torch.nn.utils.vector_to_parameters(w_new_dec, model.coordinator_dec.dec.parameters())
         # total_loss.backward()
         # optimizer.step()
 
         update_txt=f'[{i*len(d)}/{len(train_dataloader.dataset)}] | Loss: {total_loss.item():.3f} | MSE loss: {out_criterion["mse_loss"].item():.5f} | Bpp loss: {out_criterion["bpp_loss"].item():.4f}'
         tqdm_emu.set_postfix_str(update_txt, refresh=True)
         step += 1
+       
+    return model,m1
 
 def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda, stage='test'):
     model.eval()
-    device = next(model.parameters()).device
+    # device = next(model.parameters()).device
 
     loss_am = AverageMeter()
     percloss = AverageMeter()
@@ -201,6 +213,7 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
     psnr = AverageMeter()
     accuracy = AverageMeter()
     totalloss = AverageMeter()
+    device = next(model.parameters()).device
 
     with torch.no_grad():
         tqdm_meter = tqdm.tqdm(enumerate(test_dataloader),leave=False, total=len(test_dataloader))
@@ -212,7 +225,7 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
             loss, accu, perc_loss = criterion_cls(out_net, d, l)
             total_loss = 1000*lmbda*perc_loss + out_criterion['bpp_loss']
 
-            aux_loss.update(model.aux_loss())
+            # aux_loss.update(model.aux_loss())
             bpp_loss.update(out_criterion["bpp_loss"])
             loss_am.update(loss)
             mse_loss.update(out_criterion["mse_loss"])
@@ -224,12 +237,12 @@ def test_epoch(epoch, test_dataloader, model, criterion_rd, criterion_cls, lmbda
     txt = f"Loss: {loss_am.avg:.3f} | MSE loss: {mse_loss.avg:.5f} | Bpp loss: {bpp_loss.avg:.4f} | accu: {accuracy.avg:.4f}\n"
     tqdm_meter.set_postfix_str(txt)
 
-    model.train()
+    # model.train()
     print(f"{epoch} | bpp loss: {bpp_loss.avg:.5f} | psnr: {psnr.avg:.5f} | accu: {accuracy.avg:.5f}")
     return loss_am.avg
 
 def save_checkpoint(state, is_best, base_dir, filename="checkpoint.pth.tar"):
-    torch.save(state, base_dir+filename)
+    torch.save(state, os.path.join(base_dir,filename))
     if is_best:
         shutil.copyfile(base_dir+filename, base_dir+"checkpoint_best_loss.pth.tar")
 
@@ -267,6 +280,7 @@ def parse_args(argv):
 def main(argv):
     args = parse_args(argv)
     base_dir = init(args)
+    print(base_dir)
 
     if args.seed is not None:
         torch.manual_seed(args.seed)
@@ -301,10 +315,14 @@ def main(argv):
     net = net.to(device)
     for param in net.parameters():
         param.requires_grad = False
+    
+    
     if args.TRANSFER_TYPE == "prompt":
         for k, p in net.named_parameters():
             if "prompt" not in k:
                 p.requires_grad = False
+    
+            
 
     # if args.MODEL.INIT_WEIGHTS:
     #     load_pretrained_weights(net.coordinator.dec, args.MODEL.INIT_WEIGHTS)
@@ -330,8 +348,30 @@ def main(argv):
                 new_state_dict[name] = v
         else:
             new_state_dict = checkpoint['state_dict']
-        net.load_state_dict(new_state_dict, strict=True if args.TEST else False)
+ 
+ 
+        for k, p in net.named_parameters():
+        # if "coordinator" in k:
+        #     print(k)
 
+            if "coordinator_enc.dec" in k:
+            
+            #     print(k.replace("coordinator_enc.dec", "wrapper.coordinator_en") in net.state_dict().keys())
+            # #     # print("Here")
+            #     exit()
+                # w1 = torch.nn.utils.parameters_to_vector(net.wrapper.coordinator_enc.parameters())
+                # w2 = torch.nn.utils.parameters_to_vector(net.coordinator_enc.dec.parameters())
+              
+
+                new_state_dict[k.replace("coordinator_enc.dec", "wrapper.coordinator_enc")] = new_state_dict[k].clone()
+                # s+=torch.sum(torch.abs(new_state_dict[k] - new_state_dict[k]))
+            elif "coordinator_dec.dec" in k:
+                # print(k.replace("coordinator_dec.dec", "wrapper.coordinator_dec") in net.state_dict().keys())
+                
+                new_state_dict[k.replace("coordinator_dec.dec", "wrapper.coordinator_dec")] = new_state_dict[k]
+        net.load_state_dict(new_state_dict, strict=True if args.TEST else False)
+      
+     
     if args.cuda and torch.cuda.device_count() > 1:
         net = CustomDataParallel(net)
     
@@ -344,6 +384,7 @@ def main(argv):
     best_loss = float("inf")
     tqrange = tqdm.trange(last_epoch, args.epochs)
     # loss = test_epoch(-1, val_dataloader, net, rd_criterion, criterion_cls, args.VPT_lmbda,'val')
+    m1 = None
     for epoch in tqrange:
         train_dataloader = DataLoader(
             small_train_datasets[epoch%32],
@@ -353,37 +394,57 @@ def main(argv):
             pin_memory=(device == "cuda"),
         )
         step = args.batch_size*epoch + 1
-        train_one_epoch(
-            net,
-            approx_loss,
-            train_dataloader,
-            optimizer,
-            args.VPT_lmbda, 
-            step
-        )
-        loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
-        lr_scheduler.step()
-
-        is_best = loss < best_loss
-        best_loss = min(loss, best_loss)
-
-        if args.save:
-            save_checkpoint(
-                {
-                    "epoch": epoch,
-                    "state_dict": net.state_dict(),
-                    "loss": loss,
-                    "optimizer": optimizer.state_dict(),
-                    "lr_scheduler": lr_scheduler.state_dict(),
-                },
-                is_best,
-                base_dir,
-                filename=f'checkpoint_{epoch}.pth.tar'
+   
+        try:
+            net.train()
+            net,m1 = train_one_epoch(
+                net,
+                approx_loss,
+                train_dataloader,
+                optimizer,
+                args.VPT_lmbda, 
+                step, m1
             )
-            if epoch%10==9:
-                shutil.copyfile(base_dir+'checkpoint.pth.tar', base_dir+ f"checkpoint_{epoch}.pth.tar" )
-    
+            loss = test_epoch(epoch, val_dataloader, net, rdcriterion, clscriterion, args.VPT_lmbda, 'val')
+            lr_scheduler.step()
 
+            is_best = loss < best_loss
+            best_loss = min(loss, best_loss)
+        
+            if args.save:
+                save_checkpoint(
+                    {
+                        "epoch": epoch,
+                        "state_dict": net.state_dict(),
+                        "loss": loss,
+                        "optimizer": optimizer.state_dict(),
+                        "lr_scheduler": lr_scheduler.state_dict(),
+                    },
+                    is_best,
+                    base_dir,
+                    filename=f'checkpoint_{epoch}.pth.tar'
+                )
+                if epoch%10==9:
+                    shutil.copyfile(base_dir+'checkpoint.pth.tar', base_dir+ f"checkpoint_{epoch}.pth.tar" )
+
+        except Exception:
+           
+            is_best = True
+            loss = 0
+            save_checkpoint(
+                    {
+                        "epoch": epoch,
+                        "state_dict": net.state_dict(),
+                        "loss": loss,
+                        "optimizer": optimizer.state_dict(),
+                        "lr_scheduler": lr_scheduler.state_dict(),
+                    },
+                    is_best,
+                    base_dir,
+                    filename=f'checkpoint_{epoch}.pth.tar'
+                )  
+            print(traceback.format_exc())
+            exit()  
 
 if __name__ == "__main__":
     # import compressai
